@@ -1,0 +1,100 @@
+﻿name: DlsGram Windows x64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    env:
+      TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+      TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Visual Studio
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Create private API header
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ($env:TDESKTOP_API_ID -notmatch '^\d+$') {
+            throw 'Invalid TDESKTOP_API_ID secret'
+          }
+
+          if ($env:TDESKTOP_API_HASH -notmatch '^[a-fA-F0-9]+$') {
+            throw 'Invalid TDESKTOP_API_HASH secret'
+          }
+
+          New-Item -ItemType Directory -Force DesktopPrivate | Out-Null
+
+          @"
+          #pragma once
+          constexpr auto ApiId = $env:TDESKTOP_API_ID;
+          constexpr auto ApiHash = "$env:TDESKTOP_API_HASH";
+          "@ | Set-Content DesktopPrivate/custom_api_id.h -Encoding ascii
+
+      - name: Prepare dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:Platform = 'x64'
+          cmd /d /c "Telegram\build\prepare\win.bat silent"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Dependency preparation failed'
+          }
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmd /d /c "Telegram\configure.bat x64"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'CMake configuration failed'
+          }
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build out --config Release --target Telegram --parallel 2
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Telegram build failed'
+          }
+
+      - name: Find executable
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem out -Filter Telegram.exe -Recurse -File |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            throw 'Telegram.exe not found'
+          }
+
+          "TELEGRAM_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+
+      - name: Upload Telegram.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: DlsGram-Windows-x64
+          path: ${{ env.TELEGRAM_EXE }}
+          if-no-files-found: error
