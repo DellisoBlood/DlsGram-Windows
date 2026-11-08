@@ -1,5 +1,4 @@
-﻿
-name: DlsGram Windows x64
+﻿name: DlsGram Windows x64
 
 on:
   workflow_dispatch:
@@ -8,9 +7,64 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  deps:
+    name: Prepare dependencies
     runs-on: windows-2022
-    timeout-minutes: 360
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Visual Studio
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Prepare dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:Platform = 'x64'
+
+          cmd /d /c "Telegram\build\prepare\win.bat silent"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Dependency preparation failed'
+          }
+
+      - name: Show dependency sizes
+        shell: pwsh
+        run: |
+          foreach ($path in @('Libraries\win64', 'ThirdParty')) {
+            if (Test-Path $path) {
+              $size = (Get-ChildItem $path -Recurse -Force -File -ErrorAction SilentlyContinue |
+                Measure-Object Length -Sum).Sum
+              Write-Host ("{0}: {1:N2} GB" -f $path, ($size / 1GB))
+            }
+          }
+
+      - name: Save Windows dependencies cache
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: |
+            Libraries/win64
+            ThirdParty
+          key: dlsgram-win64-deps-v2-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/**') }}
+
+  build:
+    name: Build Release
+    needs: deps
+    runs-on: windows-2022
+    timeout-minutes: 350
 
     env:
       TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
@@ -38,9 +92,8 @@ jobs:
           path: |
             Libraries/win64
             ThirdParty
-          key: dlsgram-win64-deps-v1-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/**') }}
-          restore-keys: |
-            dlsgram-win64-deps-v1-${{ runner.os }}-
+          key: dlsgram-win64-deps-v2-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/**') }}
+          fail-on-cache-miss: true
 
       - name: Create private API header
         shell: pwsh
@@ -74,39 +127,14 @@ jobs:
 
           Write-Host 'API header created successfully.'
 
-      - name: Prepare dependencies
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $env:Platform = 'x64'
-
-          cmd /d /c "Telegram\build\prepare\win.bat silent"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Dependency preparation failed'
-          }
-
-      - name: Save Windows dependencies cache
-        uses: actions/cache/save@v4
-        if: success()
-        with:
-          path: |
-            Libraries/win64
-            ThirdParty
-          key: dlsgram-win64-deps-v1-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/**') }}
-
       - name: Configure
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $header = Join-Path $env:GITHUB_WORKSPACE 'DesktopPrivate\custom_api_id.h'
-
-          if (-not (Test-Path $header)) {
-            throw 'DesktopPrivate/custom_api_id.h not found before configure'
-          }
-
-          cmd /d /c "Telegram\configure.bat x64"
+          # Telegram/build/target is gitignored, so configure.py cannot infer
+          # the official target on CI; pass API credentials explicitly.
+          cmd /d /c "Telegram\configure.bat x64 -D TDESKTOP_API_ID=$env:TDESKTOP_API_ID -D TDESKTOP_API_HASH=$env:TDESKTOP_API_HASH"
 
           if ($LASTEXITCODE -ne 0) {
             throw 'CMake configuration failed'
@@ -117,7 +145,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          cmake --build out --config Release --target Telegram --parallel 2
+          cmake --build out --config Release --target Telegram --parallel 4
 
           if ($LASTEXITCODE -ne 0) {
             throw 'Telegram build failed'
@@ -134,6 +162,7 @@ jobs:
           }
 
           "TELEGRAM_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+          Write-Host "Found $($exe.FullName) ($([math]::Round($exe.Length / 1MB, 1)) MB)"
 
       - name: Upload Telegram.exe
         uses: actions/upload-artifact@v4
@@ -141,3 +170,4 @@ jobs:
           name: DlsGram-Windows-x64
           path: ${{ env.TELEGRAM_EXE }}
           if-no-files-found: error
+          retention-days: 7
