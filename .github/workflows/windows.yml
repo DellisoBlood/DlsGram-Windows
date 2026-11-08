@@ -1,4 +1,5 @@
-﻿name: DlsGram Windows x64
+﻿
+name: DlsGram Windows x64
 
 on:
   workflow_dispatch:
@@ -31,6 +32,16 @@ jobs:
         with:
           arch: x64
 
+      - name: Restore Windows dependencies cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            Libraries/win64
+            ThirdParty
+          key: dlsgram-win64-deps-v1-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/**') }}
+          restore-keys: |
+            dlsgram-win64-deps-v1-${{ runner.os }}-
+
       - name: Create private API header
         shell: pwsh
         run: |
@@ -62,7 +73,6 @@ jobs:
           }
 
           Write-Host 'API header created successfully.'
-          Write-Host "Header path: $headerFile"
 
       - name: Prepare dependencies
         shell: pwsh
@@ -75,6 +85,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'Dependency preparation failed'
           }
+
+      - name: Save Windows dependencies cache
+        uses: actions/cache/save@v4
+        if: success()
+        with:
+          path: |
+            Libraries/win64
+            ThirdParty
+          key: dlsgram-win64-deps-v1-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/**') }}
 
       - name: Configure
         shell: pwsh
