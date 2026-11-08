@@ -44,20 +44,34 @@ jobs:
             throw 'Invalid TDESKTOP_API_HASH secret'
           }
 
-          New-Item -ItemType Directory -Force DesktopPrivate | Out-Null
+          $headerDir = Join-Path $env:GITHUB_WORKSPACE 'DesktopPrivate'
+          $headerFile = Join-Path $headerDir 'custom_api_id.h'
 
-          @"
-          #pragma once
-          constexpr auto ApiId = $env:TDESKTOP_API_ID;
-          constexpr auto ApiHash = "$env:TDESKTOP_API_HASH";
-          "@ | Set-Content DesktopPrivate/custom_api_id.h -Encoding ascii
+          New-Item -ItemType Directory -Force -Path $headerDir | Out-Null
+
+          $header = @(
+            '#pragma once'
+            "constexpr auto ApiId = $($env:TDESKTOP_API_ID);"
+            "constexpr auto ApiHash = `"$($env:TDESKTOP_API_HASH)`";"
+          )
+
+          Set-Content -Path $headerFile -Value $header -Encoding ascii
+
+          if (-not (Test-Path $headerFile)) {
+            throw 'API header was not created'
+          }
+
+          Write-Host 'API header created successfully.'
+          Write-Host "Header path: $headerFile"
 
       - name: Prepare dependencies
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $env:Platform = 'x64'
+
           cmd /d /c "Telegram\build\prepare\win.bat silent"
+
           if ($LASTEXITCODE -ne 0) {
             throw 'Dependency preparation failed'
           }
@@ -66,7 +80,15 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
+          $header = Join-Path $env:GITHUB_WORKSPACE 'DesktopPrivate\custom_api_id.h'
+
+          if (-not (Test-Path $header)) {
+            throw 'DesktopPrivate/custom_api_id.h not found before configure'
+          }
+
           cmd /d /c "Telegram\configure.bat x64"
+
           if ($LASTEXITCODE -ne 0) {
             throw 'CMake configuration failed'
           }
@@ -75,7 +97,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
           cmake --build out --config Release --target Telegram --parallel 2
+
           if ($LASTEXITCODE -ne 0) {
             throw 'Telegram build failed'
           }
