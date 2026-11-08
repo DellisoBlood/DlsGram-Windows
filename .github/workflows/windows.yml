@@ -7,62 +7,8 @@ permissions:
   contents: read
 
 jobs:
-  deps:
-    name: Prepare dependencies
-    runs-on: windows-2022
-    timeout-minutes: 350
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Setup Visual Studio
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: Prepare dependencies
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $env:Platform = 'x64'
-
-          cmd /d /c "Telegram\build\prepare\win.bat silent"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Dependency preparation failed'
-          }
-
-      - name: Show dependency sizes
-        shell: pwsh
-        run: |
-          foreach ($path in @('Libraries\win64', 'ThirdParty')) {
-            if (Test-Path $path) {
-              $size = (Get-ChildItem $path -Recurse -Force -File -ErrorAction SilentlyContinue |
-                Measure-Object Length -Sum).Sum
-              Write-Host ("{0}: {1:N2} GB" -f $path, ($size / 1GB))
-            }
-          }
-
-      - name: Save Windows dependencies cache
-        uses: actions/cache/save@v4
-        continue-on-error: true
-        with:
-          path: |
-            Libraries/win64
-            ThirdParty
-          key: dlsgram-win64-deps-v2-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/**') }}
-
   build:
-    name: Build Release
-    needs: deps
+    name: Build Windows x64
     runs-on: windows-2022
     timeout-minutes: 350
 
@@ -85,15 +31,6 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-
-      - name: Restore Windows dependencies cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            Libraries/win64
-            ThirdParty
-          key: dlsgram-win64-deps-v2-${{ runner.os }}-${{ hashFiles('Telegram/build/prepare/**') }}
-          fail-on-cache-miss: true
 
       - name: Create private API header
         shell: pwsh
@@ -126,6 +63,20 @@ jobs:
           }
 
           Write-Host 'API header created successfully.'
+
+      # Dependencies are installed to the parent of the checkout (runner.workspace),
+      # not into the repository itself.
+      - name: Prepare dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:Platform = 'x64'
+
+          cmd /d /c "Telegram\build\prepare\win.bat silent"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Dependency preparation failed'
+          }
 
       - name: Configure
         shell: pwsh
